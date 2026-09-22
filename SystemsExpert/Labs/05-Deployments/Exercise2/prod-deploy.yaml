@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prod-deploy
+  namespace: prod
+  labels:
+    app: hello
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: hello
+  template:
+    metadata:
+      labels:
+        app: hello
+    spec:
+      containers:
+        - name: prod-deploy
+          image: nginx:1.30
+          ports:
+            - containerPort: 80

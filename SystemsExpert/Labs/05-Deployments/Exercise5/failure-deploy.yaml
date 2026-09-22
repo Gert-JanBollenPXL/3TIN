@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: failure-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: failure
+  template:
+    metadata:
+      labels:
+        app: failure
+    spec:
+      containers:
+        - name: nginx
+          image: doesnotexist:999

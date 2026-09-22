@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hello-pod
+spec:
+  restartPolicy: Never
+  containers:
+    - name: hello
+      image: busybox:1.37
+      args: ["/bin/sh", "-c", "echo 'Hello Kubernetes'"]
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "100m"
+          memory: "128Mi"

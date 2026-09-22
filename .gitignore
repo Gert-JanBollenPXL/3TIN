@@ -1,0 +1,113 @@
+### Environments ###
+.env
+
+### Secrets file ###
+secrets.yml
+*.secret
+*.pem
+
+### OS generated files ###
+.DS_Store
+.DS_Store?
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+### Node.js ###
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn-debug.log
+.pnpm-debug.log
+
+### Python ###
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+.eggs/
+dist/
+build/
+
+### Ruby ###
+*.gem
+.bundle/
+vendor/bundle/
+
+### Maven files ###
+HELP.md
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### Compiled class file ###
+*.class
+
+### Log file ###
+*.log
+/logs/
+/log/
+
+### Temp file ###
+*.tmp
+*.temp
+tmp/
+temp/
+.swp
+
+### BlueJ files ###
+*.ctxt
+
+### Mobile Tools for Java (J2ME) ###
+.mtj.tmp/
+
+### Package Files ###
+*.jar
+*.war
+*.nar
+*.ear
+*.tar.gz
+*.rar
+
+### VM crash logs ###
+hs_err_pid*
+replay_pid*
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### VS Code ###
+.vscode/
+
+### Vagrant ###
+.vagrant/
+
+### terraform ###
+.terraform/
+*.tfstate
+*.tfstate.*

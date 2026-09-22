@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-with-sidecar
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.30-alpine
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        - name: shared
+          mountPath: /shared
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "250m"
+          memory: "256Mi"
+    - name: writer
+      image: busybox:1.37
+      args: ["/bin/sh", "-c", "while true; do date >> /shared/time.log; sleep 10; done"]
+      volumeMounts:
+        - name: shared
+          mountPath: /shared
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+
+  volumes:
+    - name: shared
+      emptyDir:
+        sizeLimit: 500Mi

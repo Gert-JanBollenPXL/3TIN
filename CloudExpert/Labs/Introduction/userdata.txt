@@ -1,0 +1,27 @@
+#!/bin/bash
+set -e
+
+dnf update -y
+dnf install -y docker git
+
+systemctl enable --now docker
+
+cd /opt
+git clone https://github.com/Gert-JanBollenPXL/calculator-app-finished.git
+cd calculator-app-finished
+
+cat >> public/assets/style.css <<'EOF'
+
+body {
+    background-color: purple;
+}
+EOF
+
+docker build -t calculator-app .
+
+docker run -d \
+    --name calculator \
+    --restart unless-stopped \
+    -p 80:8080 \
+    -e PORT=8080 \
+    calculator-app

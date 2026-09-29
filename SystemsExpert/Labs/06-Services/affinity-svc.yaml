@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-affinity
+  namespace: lab-svc
+spec:
+  selector:
+    app: hello
+    tier: backend
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 300   # stickiness window; long enough to survive hand-typed requests
+  ports:
+  - port: 8080
+    targetPort: 5678

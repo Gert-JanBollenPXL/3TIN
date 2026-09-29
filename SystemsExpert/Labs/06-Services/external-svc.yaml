@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-service
+  namespace: lab-svc
+spec:
+  # No selector - we'll create the backend list ourselves
+  ports:
+  - port: 80
+    targetPort: 80
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: external-service-1
+  namespace: lab-svc
+  labels:
+    kubernetes.io/service-name: external-service  # links this slice to the Service
+addressType: IPv4
+endpoints:
+- addresses:
+  - "1.1.1.1"  # Cloudflare, answers HTTP on port 80
+- addresses:
+  - "1.0.0.1"  # Cloudflare, second address
+ports:
+- port: 80
+  protocol: TCP

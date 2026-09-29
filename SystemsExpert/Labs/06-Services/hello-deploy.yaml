@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-deploy
+  namespace: lab-svc
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hello
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: hello
+        tier: backend
+        version: v1.0
+    spec:
+      containers:
+      - name: hello
+        image: hashicorp/http-echo:1.0
+        args:
+          - "-text=Hello from Pod $(HOSTNAME)"
+        ports:
+        - containerPort: 5678
+        env:
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name

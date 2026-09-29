@@ -1,27 +1,32 @@
-Create a Deployment with a non-existing image doesnotexist:999.
-Observe:
+## Exercise 5: Deployment Failure Simulation
 
-    Deployment status with kubectl rollout status --timeout=30s (it can never finish; the timeout stops the wait).
-    Events from kubectl describe deployment.
-    Pod details from kubectl describe pod <pod-name>. Logs may be empty if the container never starts.
+- Create a Deployment with a non-existing image doesnotexist:999.
+- Observe:
+  - Deployment status with kubectl rollout status --timeout=30s (it can never finish; the timeout stops the wait).
+  - Events from kubectl describe deployment.
+  - Pod details from kubectl describe pod <pod-name>. Logs may be empty if the container never starts.
 
-Fix the image to a valid tag and observe automatic recovery and a successful rollout.
+- Fix the image to a valid tag and observe automatic recovery and a successful rollout.
 
 Commands used:
 
 ❯ kubectl apply -f ./Exercise5/failure-deploy.yaml
+```text
 deployment.apps/failure-deploy created
-
+```
 ❯ kubectl rollout status deployment/failure-deploy --timeout=5s
+```text
 Waiting for deployment "failure-deploy" rollout to finish: 0 of 2 updated replicas are available...
 error: timed out waiting for the condition
-
+```
 ❯ kubectl get pods
+```text
 NAME                              READY   STATUS             RESTARTS   AGE
 failure-deploy-7cf8f78fb6-hg7c4   0/1     ImagePullBackOff   0          30s
 failure-deploy-7cf8f78fb6-rrprj   0/1     ErrImagePull       0          30s
-
+```
 ❯ kubectl describe deployment failure-deploy
+```text
 Name:                   failure-deploy
 Namespace:              default
 CreationTimestamp:      Tue, 22 Sep 2026 15:58:20 +0200
@@ -55,13 +60,15 @@ Events:
   Type    Reason             Age   From                   Message
   ----    ------             ----  ----                   -------
   Normal  ScalingReplicaSet  46s   deployment-controller  Scaled up replica set failure-deploy-7cf8f78fb6 from 0 to 2
-
+```
 ❯ kubectl get pods
+```text
 NAME                              READY   STATUS             RESTARTS   AGE
 failure-deploy-7cf8f78fb6-hg7c4   0/1     ImagePullBackOff   0          89s
 failure-deploy-7cf8f78fb6-rrprj   0/1     ImagePullBackOff   0          89s
-
+```
 ❯ kubectl describe pod failure-deploy-7cf8f78fb6-hg7c4
+```text
 Name:             failure-deploy-7cf8f78fb6-hg7c4
 Namespace:        default
 Priority:         0
@@ -117,11 +124,14 @@ Events:
   Normal   Pulling    6s (x4 over 100s)  kubelet            spec.containers{nginx}: Pulling image "doesnotexist:999"
   Warning  Failed     5s (x4 over 99s)   kubelet            spec.containers{nginx}: Failed to pull image "doesnotexist:999": failed to pull and unpack image "docker.io/library/doesnotexist:999": failed to resolve reference "docker.io/library/doesnotexist:999": pull access denied, repository does not exist or may require authorization: server message: insufficient_scope: authorization failed
   Warning  Failed     5s (x4 over 99s)   kubelet            spec.containers{nginx}: Error: ErrImagePull
-
+```
 ❯ kubectl set image deployment/failure-deploy nginx=nginx:1.29
+```text
 deployment.apps/failure-deploy image updated
-
+```
 ❯ kubectl get pods
+```text
 NAME                              READY   STATUS    RESTARTS   AGE
 failure-deploy-78f9bb666d-kmp4h   1/1     Running   0          8s
 failure-deploy-78f9bb666d-ndw7x   1/1     Running   0          8s
+```

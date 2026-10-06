@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-v1
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-v1
+  template:
+    metadata:
+      labels:
+        app: echo-v1
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0
+          args:
+            - "-text=v1"
+          ports:
+            - containerPort: 5678
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-v2
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-v2
+  template:
+    metadata:
+      labels:
+        app: echo-v2
+    spec:
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0
+          args:
+            - "-text=v2"
+          ports:
+            - containerPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-v1
+  namespace: default
+spec:
+  selector:
+    app: echo-v1
+  ports:
+    - port: 80
+      targetPort: 5678
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-v2
+  namespace: default
+spec:
+  selector:
+    app: echo-v2
+  ports:
+    - port: 80
+      targetPort: 5678
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: eg
+      namespace: default
+  hostnames:
+    - canary.example.com
+  rules:
+    - backendRefs:
+        - name: echo-v1
+          port: 80
+          weight: 90
+        - name: echo-v2
+          port: 80
+          weight: 10

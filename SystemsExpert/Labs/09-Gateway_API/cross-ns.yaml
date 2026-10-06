@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: other
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: other-nginx
+  namespace: other
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: other-nginx
+  template:
+    metadata:
+      labels:
+        app: other-nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.30
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: other-nginx-svc
+  namespace: other
+spec:
+  selector:
+    app: other-nginx
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: allow-default-routes
+  namespace: other
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: default
+  to:
+    - group: ""
+      kind: Service
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: other-nginx-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: eg
+      namespace: default
+  hostnames:
+    - other.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: other-nginx-svc
+          namespace: other
+          port: 80

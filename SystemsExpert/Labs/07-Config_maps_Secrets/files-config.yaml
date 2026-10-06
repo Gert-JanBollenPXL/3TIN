@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: files-config
+  namespace: config-lab
+data:
+  app.properties: |
+    database.url=jdbc:postgresql://localhost:5432/mydb
+    database.pool.size=10
+    cache.ttl=3600
+    feature.newUI=true
+  
+  nginx.conf: |
+    server {
+      listen 80;
+      server_name example.com;
+      
+      location / {
+        proxy_pass http://backend:8080;
+        proxy_set_header Host $host;
+      }
+    }

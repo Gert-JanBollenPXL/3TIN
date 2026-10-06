@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dynamic-config
+  namespace: config-lab
+data:
+  refresh-interval: "30"
+  feature-flag: "false"
+  message: "Initial message"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamic-app
+  namespace: config-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dynamic
+  template:
+    metadata:
+      labels:
+        app: dynamic
+    spec:
+      containers:
+      - name: app
+        image: busybox:1.37
+        command: ['sh', '-c']
+        args:
+        - |
+          CONFIG_FILE="/config/message"
+          LAST_CONFIG=""
+          echo "=== Dynamic Config Reload Demo ==="
+          echo "Watching for config changes in: $CONFIG_FILE"
+          echo ""
+          while true; do
+            if [ -f "$CONFIG_FILE" ]; then
+              CURRENT_CONFIG=$(cat "$CONFIG_FILE")
+              if [ "$CURRENT_CONFIG" != "$LAST_CONFIG" ]; then
+                echo "[$(date +%H:%M:%S)] Config changed: $CURRENT_CONFIG"
+                LAST_CONFIG="$CURRENT_CONFIG"
+              fi
+            fi
+            sleep 5
+          done
+        volumeMounts:
+        - name: config
+          mountPath: /config
+      volumes:
+      - name: config
+        configMap:
+          name: dynamic-config

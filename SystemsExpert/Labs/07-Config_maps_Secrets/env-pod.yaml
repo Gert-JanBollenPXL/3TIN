@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: env-pod
+  namespace: config-lab
+spec:
+  containers:
+  - name: app
+    image: busybox:1.37
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "Starting application..."
+      echo "APP_NAME: $APP_NAME"
+      echo "APP_ENV: $APP_ENV"
+      echo "DEBUG: $DEBUG"
+      echo "PORT: $PORT"
+      sleep 3600
+    envFrom:
+    - configMapRef:
+        name: app-config

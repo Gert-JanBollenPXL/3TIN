@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: config-lab
+data:
+  APP_NAME: "MyWebApp"
+  APP_ENV: "development"
+  DEBUG: "true"
+  PORT: "8080"

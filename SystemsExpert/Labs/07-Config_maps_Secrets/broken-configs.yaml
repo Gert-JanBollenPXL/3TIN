@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-pod-1
+  namespace: config-lab
+spec:
+  containers:
+  - name: app
+    image: busybox:1.37
+    command: ['sh', '-c', 'echo "Value: $MISSING_VALUE"; sleep 3600']
+    env:
+    - name: MISSING_VALUE
+      valueFrom:
+        configMapKeyRef:
+          name: nonexistent-config  # This ConfigMap doesn't exist
+          key: some-key
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-pod-2
+  namespace: config-lab
+spec:
+  containers:
+  - name: app
+    image: busybox:1.37
+    command: ['sh', '-c', 'cat /config/file.txt; sleep 3600']
+    volumeMounts:
+    - name: config
+      mountPath: /config
+  volumes:
+  - name: config
+    configMap:
+      name: webapp-config
+      items:
+      - key: wrong-key   # This key doesn't exist in the ConfigMap
+        path: file.txt
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: broken-pod-3
+  namespace: config-lab
+spec:
+  containers:
+  - name: app
+    image: busybox:1.37
+    command: ['sh', '-c', 'echo "Starting..."; sleep 3600']
+    envFrom:
+    - secretRef:
+        name: missing-secret  # This Secret doesn't exist

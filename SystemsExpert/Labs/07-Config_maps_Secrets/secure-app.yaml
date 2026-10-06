@@ -1,0 +1,70 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secure-creds
+  namespace: config-lab
+type: Opaque
+stringData:
+  api-key: "sk-prod-xxxxxxxxxxxxx"
+  db-password: "V3ryS3cur3P@ssw0rd!"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-app
+  namespace: config-lab
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
+  containers:
+  - name: app
+    image: busybox:1.37
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "=== Secure Application Starting ==="
+      echo ""
+      echo "Checking secrets are mounted..."
+      if [ -f /secrets/api-key ] && [ -f /secrets/db-password ]; then
+        echo "Secrets mounted: OK"
+        echo "Permissions on secret files:"
+        ls -la /secrets/
+        # Follow symlinks and show real file mode
+        stat -Lc "%a %n" /secrets/*
+      else
+        echo "ERROR: Secrets not found"
+        exit 1
+      fi
+      echo ""
+      echo "Application would connect to services here..."
+      echo "Never log actual secret values."
+      echo ""
+      # Simulate app running
+      while true; do
+        echo "[$(date +%H:%M:%S)] Secure app running..."
+        sleep 60
+      done
+    volumeMounts:
+    - name: secrets
+      mountPath: /secrets
+      readOnly: true
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      readOnlyRootFilesystem: true
+    resources:
+      requests:
+        memory: "32Mi"
+        cpu: "10m"
+      limits:
+        memory: "64Mi"
+        cpu: "50m"
+  volumes:
+  - name: secrets
+    secret:
+      secretName: secure-creds
+      defaultMode: 0400  # Read-only for owner

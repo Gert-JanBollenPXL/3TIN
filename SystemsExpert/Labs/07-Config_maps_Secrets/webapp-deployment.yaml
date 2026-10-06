@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp
+  namespace: config-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: busybox:1.37
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "=== Application Starting ==="
+          echo "Environment: $APP_ENV"
+          echo "Log Level: $LOG_LEVEL"
+          echo "Port: $SERVER_PORT"
+          echo ""
+          echo "=== Security Check ==="
+          echo "DB Password is set: $(test -n "$DB_PASSWORD" && echo YES || echo NO)"
+          echo "API Key is set: $(test -n "$API_KEY" && echo YES || echo NO)"
+          echo "JWT Secret is set: $(test -n "$JWT_SECRET" && echo YES || echo NO)"
+          echo ""
+          echo "=== Config Files ==="
+          echo "Config file at /etc/webapp/config.json:"
+          cat /etc/webapp/config.json
+          echo ""
+          echo "=== Server Running ==="
+          while true; do
+            echo "[$(date +%H:%M:%S)] Server running on port $SERVER_PORT..."
+            sleep 30
+          done
+        # Environment from ConfigMap
+        envFrom:
+        - configMapRef:
+            name: webapp-config
+        # Specific secrets as env vars
+        env:
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: webapp-secrets
+              key: DB_PASSWORD
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: webapp-secrets
+              key: API_KEY
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: webapp-secrets
+              key: JWT_SECRET
+        # Mount config files
+        volumeMounts:
+        - name: config-files
+          mountPath: /etc/webapp
+          readOnly: true
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+      volumes:
+      - name: config-files
+        configMap:
+          name: webapp-files

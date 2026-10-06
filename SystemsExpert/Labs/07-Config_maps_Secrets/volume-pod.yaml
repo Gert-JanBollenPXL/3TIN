@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: volume-pod
+  namespace: config-lab
+spec:
+  containers:
+  - name: app
+    image: busybox:1.37
+    command: ['sh', '-c']
+    args:
+    - |
+      echo "=== Listing config files ==="
+      ls -la /config/
+      echo ""
+      echo "=== Content of app.properties ==="
+      cat /config/app.properties
+      echo ""
+      echo "=== Content of nginx.conf ==="
+      cat /config/nginx.conf
+      sleep 3600
+    volumeMounts:
+    - name: config-volume
+      mountPath: /config
+      readOnly: true
+  volumes:
+  - name: config-volume
+    configMap:
+      name: files-config

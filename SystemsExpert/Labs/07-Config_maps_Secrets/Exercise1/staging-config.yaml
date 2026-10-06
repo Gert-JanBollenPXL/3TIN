@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: staging
+data:
+  APP_ENV: "staging"
+  LOG_LEVEL: "info"
+  DB_HOST: "staging-db.internal"
+  DB_PORT: "5432"
+  FEATURE_FLAG: "experimental=false,analytics=true"

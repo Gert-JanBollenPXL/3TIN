@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: dev
+data:
+  APP_ENV: "development"
+  LOG_LEVEL: "debug"
+  DB_HOST: "localhost"
+  DB_PORT: "5432"
+  FEATURE_FLAG: "experimental=true,analytics=false"

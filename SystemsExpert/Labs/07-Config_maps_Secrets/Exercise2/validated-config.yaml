@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: validated-config
+data:
+  DB_HOST: "database.local"
+  DB_PORT: "5432"
+  DB_NAME: "myapp"
+  CACHE_HOST: "redis.local"
+  APP_ENV: "production"

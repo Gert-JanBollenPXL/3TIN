@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: config-validator
+spec:
+  restartPolicy: Never
+  containers:
+    - name: config-validator
+      image: busybox:1.37
+      command: ["sh", "-c"]
+      args:
+      - |
+        echo "=== Configuration Validation ==="
+        FAILED=0
+
+        # Required ConfigMap values
+        for VAR in DB_HOST DB_PORT DB_NAME APP_ENV; do
+          eval "VALUE=\${$VAR}"
+
+          if [ -z "$VALUE" ]; then
+            echo "ERROR: Required config missing: $VAR"
+            FAILED=1
+          else
+            echo "OK: $VAR = $VALUE"
+          fi
+        done
+
+        # Required Secret values
+        for VAR in DB_USER DB_PASSWORD; do
+          eval "VALUE=\${$VAR}"
+
+          if [ -z "$VALUE" ]; then
+            echo "ERROR: Required config missing: $VAR"
+            FAILED=1
+          else
+            echo "OK: $VAR is set (length: ${#VALUE})"
+          fi
+        done
+
+        # Optional ConfigMap values
+        for VAR in CACHE_HOST CACHE_PORT LOG_LEVEL; do
+          eval "VALUE=\${$VAR}"
+
+          if [ -z "$VALUE" ]; then
+            echo "WARNING: Optional config not set: $VAR (using defaults)"
+          else
+            echo "OK: $VAR = $VALUE"
+          fi
+        done
+
+        # Optional Secret
+        if [ -z "$API_KEY" ]; then
+          echo "WARNING: Optional config not set: API_KEY (using defaults)"
+        else
+          echo "OK: API_KEY is set (length: ${#API_KEY})"
+        fi
+
+        # Validate DB_PORT (digits only)
+          if [ -n "$DB_PORT" ]; then
+            case "$DB_PORT" in
+              *[!0-9]*)
+                echo "ERROR: DB_PORT is not a valid number: $DB_PORT"
+                FAILED=1
+                ;;
+            esac
+          fi
+
+        # Validate APP_ENV
+        if [ -n "$APP_ENV" ]; then
+          case "$APP_ENV" in
+            development|staging|production)
+              ;;
+            *)
+              echo "ERROR: APP_ENV is not a valid environment: $APP_ENV"
+              FAILED=1
+              ;;
+          esac
+        fi
+
+        # Final result
+        if [ "$FAILED" -eq 0 ]; then
+          echo "VALIDATION PASSED"
+          sleep 3600
+        else
+          echo "VALIDATION FAILED"
+          exit 1
+        fi
+
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "200m"
+          memory: "256Mi"
+
+      envFrom:
+        - configMapRef:
+            name: validated-config
+            optional: true
+        - secretRef:
+            name: validated-secrets
+            optional: true
+      env:
+        - name: CACHE_PORT
+          value: "6379"
+        - name: LOG_LEVEL
+          value: "info"

@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cloud Expert managed EC2 node for Systems Manager, CloudFormation, and observability labs.
+
+Parameters:
+  ExistingInstanceProfileName:
+    Type: String
+    Default: LabInstanceProfile
+    Description: Existing EC2 instance profile with AmazonSSMManagedInstanceCore-equivalent permissions.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Regional Systems Manager public parameter for Amazon Linux 2023.
+
+Resources:
+  LabVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.30.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: cloud-expert-lab
+        - Key: Course
+          Value: CloudExpert
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref LabVpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.30.10.0/24
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: cloud-expert-public-a
+        - Key: Course
+          Value: CloudExpert
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref LabVpc
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  ManagedNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Outbound access for Systems Manager. No inbound rules.
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: cloud-expert-managed-node
+
+  ManagedNode:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t3.micro
+      IamInstanceProfile: !Ref ExistingInstanceProfileName
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref ManagedNodeSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 8
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: cloud-expert-managed-node
+        - Key: Course
+          Value: CloudExpert
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euo pipefail
+          printf 'cloud-expert\n' > /etc/cloud-expert-lab
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance managed through Systems Manager.
+    Value: !Ref ManagedNode
+
+  VpcId:
+    Description: VPC created for the lab.
+    Value: !Ref LabVpc
+
+  SecurityGroupId:
+    Description: Security group with no inbound rules.
+    Value: !Ref ManagedNodeSecurityGroup

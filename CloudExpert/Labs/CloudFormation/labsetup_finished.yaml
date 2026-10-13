@@ -1,0 +1,416 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Cloud Expert managed EC2 node for Systems Manager, CloudFormation, and observability labs.
+
+Parameters:
+  ExistingInstanceProfileName:
+    Type: String
+    Default: LabInstanceProfile
+    Description: Existing EC2 instance profile with AmazonSSMManagedInstanceCore-equivalent permissions.
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+    Description: Regional Systems Manager public parameter for Amazon Linux 2023.
+  
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+    Default: "CloudExpert123!"
+    Description: Master password for Amazon RDS MariaDB instance.
+
+  EnvironmentType:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - prod
+    Description: Environment tier affecting instance sizing and monitoring.
+
+Mappings:
+  EnvironmentConfig:
+    dev:
+      InstanceType: t3.micro
+      DbAllocatedStorage: "20"
+    prod:
+      InstanceType: t3.small
+      DbAllocatedStorage: "50"
+
+Conditions:
+  IsProduction: !Equals [!Ref EnvironmentType, "prod"]
+
+Resources:
+  LabVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.30.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: cloud-expert-lab
+        - Key: Course
+          Value: CloudExpert
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref LabVpc
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.30.10.0/24
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: cloud-expert-public-a
+        - Key: Course
+          Value: CloudExpert
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.30.11.0/24
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: cloud-expert-public-b
+        - Key: Course
+          Value: CloudExpert
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.30.20.0/24
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: cloud-expert-private-a
+        - Key: Course
+          Value: CloudExpert
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.30.21.0/24
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref LabVpc
+      Tags:
+        - Key: Name
+          Value: cloud-expert-private-b
+        - Key: Course
+          Value: CloudExpert
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref LabVpc
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref LabVpc
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetB
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnetA
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnetB
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Database subnet group spanning private subnets
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+      Tags:
+        - Key: Name
+          Value: cloud-expert-db-subnet-group
+        - Key: Course
+          Value: CloudExpert
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database ingress from managed compute instances
+      VpcId: !Ref LabVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref ManagedNodeSecurityGroup
+      Tags:
+        - Key: Name
+          Value: cloud-expert-db-sg
+        - Key: Course
+          Value: CloudExpert
+
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    Properties:
+      AllocatedStorage: !FindInMap [EnvironmentConfig, !Ref EnvironmentType, DbAllocatedStorage]
+      DBInstanceClass: db.t3.micro
+      Engine: mariadb
+      MasterUsername: dbadmin
+      MasterUserPassword: !Ref DatabasePassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+      PubliclyAccessible: false
+      MultiAZ: false
+      Tags:
+        - Key: Name
+          Value: cloud-expert-mariadb
+        - Key: Course
+          Value: CloudExpert
+
+  ManagedNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Outbound access for Systems Manager. No inbound rules.
+      VpcId: !Ref LabVpc
+      SecurityGroupIngress: 
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: cloud-expert-managed-node
+
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public ingress for Application Load Balancer.
+      VpcId: !Ref LabVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: cloud-expert-alb-sg
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: cloud-expert-alb
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+        - !Ref PublicSubnet
+        - !Ref PublicSubnetB
+      SecurityGroups:
+        - !Ref AlbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: cloud-expert-alb
+        - Key: Course
+          Value: CloudExpert
+
+  AlbTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: cloud-expert-alb-tg
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref LabVpc
+      TargetType: instance
+      HealthCheckPath: /
+      HealthCheckIntervalSeconds: 15
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Targets:
+        - Id: !Ref ManagedNodeA
+          Port: 80
+        - Id: !Ref ManagedNodeB
+          Port: 80
+      Tags:
+        - Key: Name
+          Value: cloud-expert-alb-tg
+        - Key: Course
+          Value: CloudExpert
+
+  AlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AlbTargetGroup
+
+  ManagedNodeA:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !FindInMap [EnvironmentConfig, !Ref EnvironmentType, InstanceType]
+      Monitoring: !If [IsProduction, true, false]
+      IamInstanceProfile: !Ref ExistingInstanceProfileName
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref ManagedNodeSecurityGroup
+          SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 8
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: cloud-expert-managed-node
+        - Key: Course
+          Value: CloudExpert
+        - Key: Environment
+          Value: Development
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+          INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+          AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          mkdir -p /var/www
+          cat <<EOF > /var/www/index.html
+          <h1>CloudExpert Service</h1>
+          <p>Instance: $INSTANCE_ID</p>
+          <p>Availability Zone: $AZ</p>
+          EOF
+          cd /var/www
+          nohup python3 -m http.server 80 > /dev/null 2>&1 &
+
+  ManagedNodeB:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: !FindInMap [EnvironmentConfig, !Ref EnvironmentType, InstanceType]
+      Monitoring: !If [IsProduction, true, false]
+      IamInstanceProfile: !Ref ExistingInstanceProfileName
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeleteOnTermination: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref ManagedNodeSecurityGroup
+          SubnetId: !Ref PublicSubnetB
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: true
+            Encrypted: true
+            VolumeSize: 8
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: cloud-expert-managed-node-b
+        - Key: Course
+          Value: CloudExpert
+        - Key: Environment
+          Value: Development
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+          INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+          AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          mkdir -p /var/www
+          cat <<EOF > /var/www/index.html
+          <h1>CloudExpert Service</h1>
+          <p>Instance: $INSTANCE_ID</p>
+          <p>Availability Zone: $AZ</p>
+          EOF
+          cd /var/www
+          nohup python3 -m http.server 80 > /dev/null 2>&1 &
+
+Outputs:
+  InstanceId:
+    Description: EC2 instance managed through Systems Manager.
+    Value: !Ref ManagedNodeA
+
+  InstanceIdB:
+    Description: EC2 instance B managed through Systems Manager.
+    Value: !Ref ManagedNodeB
+
+  VpcId:
+    Description: VPC created for the lab.
+    Value: !Ref LabVpc
+
+  PublicSubnetBId:
+    Description: Public subnet created for excercise 1.
+    Value: !Ref PublicSubnetB
+  
+  PrivateSubnetAId:
+    Description: Private subnet A created for excercise 1.
+    Value: !Ref PrivateSubnetA
+  
+  PrivateSubnetBId:
+    Description: Private subnet B created for excercise 1.
+    Value: !Ref PrivateSubnetB
+
+  SecurityGroupId:
+    Description: Security group with no inbound rules.
+    Value: !Ref ManagedNodeSecurityGroup
+
+  LoadBalancerDnsName:
+    Description: Public DNS name of the Application Load Balancer.
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+  DatabaseEndpointAddress:
+    Description: Private connection endpoint for MariaDB database.
+    Value: !GetAtt DatabaseInstance.Endpoint.Address

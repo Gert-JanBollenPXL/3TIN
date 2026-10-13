@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: combined-probes
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: combined-probes
+  template:
+    metadata:
+      labels:
+        app: combined-probes
+    spec:
+      containers:
+      - name: app
+        image: python:3.11-alpine
+        command:
+        - python
+        - -u
+        - -c
+        - |
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          import time
+          import os
+
+          pod_name = os.environ.get('HOSTNAME', 'unknown')
+          start_time = time.time()
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  elapsed = time.time() - start_time
+
+                  if self.path == '/health':
+                      # Fail liveness after 60 seconds
+                      if elapsed < 60:
+                          self.send_response(200)
+                          self.end_headers()
+                          self.wfile.write(b'Healthy')
+                      else:
+                          self.send_response(500)
+                          self.end_headers()
+                          self.wfile.write(b'Unhealthy - restart needed')
+
+                  elif self.path == '/ready':
+                      # Not ready between 30-45 seconds (temporary issue)
+                      if 30 <= elapsed <= 45:
+                          self.send_response(503)
+                          self.end_headers()
+                          self.wfile.write(b'Temporarily unavailable')
+                      else:
+                          self.send_response(200)
+                          self.end_headers()
+                          self.wfile.write(b'Ready')
+
+                  elif self.path == '/':
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(f'Pod {pod_name} - uptime: {int(elapsed)}s'.encode())
+
+              def log_message(self, format, *args):
+                  if not any(probe in args[0] for probe in ['/health', '/ready']):
+                      print(f"{pod_name}: {args[0]}")
+
+          server = HTTPServer(('0.0.0.0', 8080), Handler)
+          print(f'Pod {pod_name} started')
+          server.serve_forever()
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          periodSeconds: 3
+          failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: combined-probes
+spec:
+  selector:
+    app: combined-probes
+  ports:
+  - port: 80
+    targetPort: 8080

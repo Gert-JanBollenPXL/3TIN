@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: graceful-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: graceful-app
+  template:
+    metadata:
+      labels:
+        app: graceful-app
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: app
+        image: python:3.11-alpine
+        command:
+        - python
+        - -u
+        - -c
+        - |
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          import signal
+          import time
+          import threading
+          import os
+
+          pod_name = os.environ.get('HOSTNAME', 'unknown')
+          shutting_down = False
+
+          def signal_handler(signum, frame):
+              global shutting_down
+              print(f"Pod {pod_name}: Received SIGTERM, starting graceful shutdown...")
+              shutting_down = True
+              # Keep answering for 5 more seconds, so requests that were already
+              # routed here still succeed while the endpoint removal propagates,
+              # then stop the server. Do not sleep here: the server runs in this
+              # same thread, and sleeping would leave connections unanswered.
+              def stop():
+                  time.sleep(5)
+                  server.shutdown()
+              threading.Thread(target=stop).start()
+
+          signal.signal(signal.SIGTERM, signal_handler)
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_GET(self):
+                  if self.path == '/ready':
+                      if shutting_down:
+                          self.send_response(503)
+                          self.end_headers()
+                          self.wfile.write(b'Shutting down')
+                      else:
+                          self.send_response(200)
+                          self.end_headers()
+                          self.wfile.write(b'Ready')
+
+                  elif self.path == '/health':
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(b'Healthy')
+
+                  elif self.path == '/':
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(f'Pod {pod_name}'.encode())
+
+                  else:
+                      self.send_response(404)
+                      self.end_headers()
+
+              def log_message(self, format, *args):
+                  if not any(probe in args[0] for probe in ['/health', '/ready']):
+                      print(f"{pod_name}: {args[0]}")
+
+          server = HTTPServer(('0.0.0.0', 8080), Handler)
+          print(f'Pod {pod_name} started with graceful shutdown handler')
+          server.serve_forever()
+          print(f"Pod {pod_name}: Cleanup complete, exiting")
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          periodSeconds: 2
+          failureThreshold: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: graceful-app
+spec:
+  selector:
+    app: graceful-app
+  ports:
+  - port: 80
+    targetPort: 8080

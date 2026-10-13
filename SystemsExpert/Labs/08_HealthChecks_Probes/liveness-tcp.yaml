@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: liveness-tcp
+  labels:
+    app: liveness-tcp
+spec:
+  containers:
+  - name: app
+    image: busybox:1.37
+    ports:
+    - containerPort: 8080
+    command:
+    - sh
+    - -c
+    - |
+      # Listen on TCP 8080 for ~30 seconds, then stop listening.
+      # The main container process keeps running afterwards, so the
+      # restart you will see is caused by the probe, not by a process exit.
+      (while true; do printf 'HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok' | nc -l -p 8080; done) &
+      LISTENER=$!
+      sleep 30
+      kill $LISTENER 2>/dev/null
+      killall nc 2>/dev/null
+      echo "listener stopped; container process still alive"
+      sleep 3600
+    livenessProbe:
+      tcpSocket:
+        port: 8080
+      initialDelaySeconds: 5
+      periodSeconds: 10

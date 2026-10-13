@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: probe-monitor
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: probe-monitor-pod-reader
+subjects:
+- kind: ServiceAccount
+  name: probe-monitor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: pod-reader
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: metrics-script
+data:
+  check.sh: |
+    #!/bin/sh
+    echo "=== Pod probe status ==="
+    kubectl get pods -o custom-columns=POD:.metadata.name,READY:.status.containerStatuses[0].ready,RESTARTS:.status.containerStatuses[0].restartCount,LAST-EXIT:.status.containerStatuses[0].lastState.terminated.reason
+    echo
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: metrics-monitor
+spec:
+  serviceAccountName: probe-monitor
+  containers:
+  - name: monitor
+    image: alpine/kubectl:1.36.2   # kubectl image that also contains a shell
+    command:
+    - sh
+    - -c
+    - |
+      while true; do
+        sh /scripts/check.sh
+        sleep 30
+      done
+    volumeMounts:
+    - name: scripts
+      mountPath: /scripts
+  volumes:
+  - name: scripts
+    configMap:
+      name: metrics-script
+      defaultMode: 0755

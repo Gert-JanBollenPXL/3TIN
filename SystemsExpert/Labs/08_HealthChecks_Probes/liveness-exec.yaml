@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: liveness-exec
+  labels:
+    app: liveness-exec
+spec:
+  containers:
+  - name: app
+    image: busybox:1.37
+    args:
+    - sh
+    - -c
+    - |
+      touch /tmp/healthy
+      echo "Application started"
+      sleep 30
+      rm -f /tmp/healthy
+      echo "Simulating application failure"
+      sleep 600
+    livenessProbe:
+      exec:
+        command:
+        - cat
+        - /tmp/healthy
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 3

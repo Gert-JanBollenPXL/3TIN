@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: liveness-http
+  labels:
+    app: liveness-http
+spec:
+  containers:
+  - name: app
+    image: python:3.11-alpine
+    command:
+    - python
+    - -u
+    - -c
+    - |
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      import time
+
+      start_time = time.time()
+
+      class HealthHandler(BaseHTTPRequestHandler):
+          def do_GET(self):
+              if self.path == '/health':
+                  elapsed = time.time() - start_time
+                  if elapsed < 30:
+                      self.send_response(200)
+                      self.end_headers()
+                      self.wfile.write(b'Healthy')
+                  else:
+                      self.send_response(500)
+                      self.end_headers()
+                      self.wfile.write(b'Unhealthy')
+              else:
+                  self.send_response(404)
+                  self.end_headers()
+
+          def log_message(self, format, *args):
+              pass  # Suppress logs for cleaner output
+
+      server = HTTPServer(('0.0.0.0', 8080), HealthHandler)
+      print('Server started on port 8080')
+      server.serve_forever()
+    ports:
+    - containerPort: 8080
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 3
+      timeoutSeconds: 1
+      failureThreshold: 3

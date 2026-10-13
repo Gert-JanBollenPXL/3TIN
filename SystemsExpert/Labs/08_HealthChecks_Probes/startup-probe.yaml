@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: slow-starter
+  labels:
+    app: slow-starter
+spec:
+  containers:
+  - name: app
+    image: python:3.11-alpine
+    command:
+    - python
+    - -u
+    - -c
+    - |
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      import time
+      import os
+
+      print("Starting slow initialization...")
+      startup_duration = 40  # Simulate 40 second startup
+      start_time = time.time()
+
+      # Simulate initialization work
+      while time.time() - start_time < startup_duration:
+          time.sleep(1)
+          print(f"Initializing... {int(time.time() - start_time)}/{startup_duration} seconds")
+
+      print("Initialization complete! Starting server...")
+
+      class Handler(BaseHTTPRequestHandler):
+          def do_GET(self):
+              if self.path in ['/startup', '/health', '/ready']:
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b'OK')
+              else:
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b'Application running')
+
+          def log_message(self, format, *args):
+              if not any(probe in args[0] for probe in ['/startup', '/health', '/ready']):
+                  print(args[0])
+
+      server = HTTPServer(('0.0.0.0', 8080), Handler)
+      server.serve_forever()
+    ports:
+    - containerPort: 8080
+    startupProbe:
+      httpGet:
+        path: /startup
+        port: 8080
+      periodSeconds: 10
+      failureThreshold: 12  # up to 120s of startup budget; the app needs ~40s.
+                            # Size this with real headroom: with 6 the app would
+                            # already be burning 5 of its 6 allowed failures.
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 8080
+      periodSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /ready
+        port: 8080
+      periodSeconds: 3
+      failureThreshold: 2

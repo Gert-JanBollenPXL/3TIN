@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: timeout-demo
+  labels:
+    app: timeout-demo
+spec:
+  containers:
+  - name: app
+    image: python:3.11-alpine
+    command:
+    - python
+    - -u
+    - -c
+    - |
+      from http.server import HTTPServer, BaseHTTPRequestHandler
+      import time
+
+      class Handler(BaseHTTPRequestHandler):
+          def do_GET(self):
+              if self.path == '/slow':
+                  # This takes 3 seconds
+                  time.sleep(3)
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b'Slow response')
+              elif self.path == '/fast':
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b'Fast response')
+              else:
+                  self.send_response(404)
+                  self.end_headers()
+
+          def log_message(self, format, *args):
+              print(f"Request: {args[0]}")
+
+      server = HTTPServer(('0.0.0.0', 8080), Handler)
+      print('Server started')
+      server.serve_forever()
+    ports:
+    - containerPort: 8080
+    livenessProbe:
+      httpGet:
+        path: /slow
+        port: 8080
+      timeoutSeconds: 1  # Too short!
+      periodSeconds: 5
+      failureThreshold: 3

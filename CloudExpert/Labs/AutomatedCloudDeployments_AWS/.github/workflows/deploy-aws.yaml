@@ -1,0 +1,223 @@
+name: CI/CD AWS Deployment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/gert-janbollenpxl/cloud-expert-service
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Run unit tests
+        run: |
+          npm ci
+          npm test
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build container image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+
+  release-image:
+    needs: test-and-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Sign in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish container image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+  deploy-infra:
+    needs: release-image
+    runs-on: ubuntu-latest
+    environment: academy
+    outputs:
+      instance_id: ${{ steps.stack_outputs.outputs.instance_id }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+
+      - name: Verify identity
+        run: aws sts get-caller-identity
+
+      - name: Validate template syntax
+        run: aws cloudformation validate-template --template-body file://labsetup.yaml
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name cloud-expert-managed-node \
+            --template-file labsetup.yaml \
+            --parameter-overrides ExistingInstanceProfileName=LabInstanceProfile \
+            --no-fail-on-empty-changeset
+
+      - name: Extract instance ID
+        id: stack_outputs
+        run: |
+          INSTANCE_ID=$(aws cloudformation describe-stacks \
+            --stack-name cloud-expert-managed-node \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+            --output text)
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "Target EC2 Instance: $INSTANCE_ID"
+
+  deploy-app:
+    needs: [deploy-infra, release-image]
+    runs-on: ubuntu-latest
+    environment: academy
+    steps:
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+
+      - name: Deploy container to EC2 via Systems Manager
+        env:
+          INSTANCE_ID: ${{ needs.deploy-infra.outputs.instance_id }}
+          IMAGE_TAG: ${{ env.IMAGE }}:${{ github.sha }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Waiting for SSM Agent on $INSTANCE_ID to report online..."
+          until aws ssm describe-instance-information \
+            --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+            --query "InstanceInformationList[?PingStatus=='Online'].InstanceId" \
+            --output text | grep -q "$INSTANCE_ID"; do
+            echo "Instance $INSTANCE_ID is not online in SSM yet. Sleeping 10s..."
+            sleep 10
+          done
+
+          echo "Dispatching deployment command via SSM..."
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy Lab 5 Containerized Service" \
+            --parameters commands='[
+              "set -euo pipefail",
+              "dnf install -y docker",
+              "systemctl enable --now docker",
+              "echo \"'"$REGISTRY_TOKEN"'\" | docker login ghcr.io -u \"'"$REGISTRY_USER"'\" --password-stdin",
+              "docker pull \"'"$IMAGE_TAG"'\"",
+              "docker stop cloud-expert-service 2>/dev/null || true",
+              "docker rm cloud-expert-service 2>/dev/null || true",
+              "docker run -d --name cloud-expert-service --restart unless-stopped -p 3000:3000 \"'"$IMAGE_TAG"'\""
+            ]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "Command dispatched: $COMMAND_ID. Waiting for execution..."
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID"
+
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query '{Status:Status,StandardOutput:StandardOutputContent,StandardError:StandardErrorContent}' \
+            --output table
+
+  smoke-test:
+    needs: [deploy-infra, deploy-app]
+    runs-on: ubuntu-latest
+    environment: academy
+    steps:
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+
+      - name: Run automated health check on AWS host
+        env:
+          INSTANCE_ID: ${{ needs.deploy-infra.outputs.instance_id }}
+        run: |
+          echo "Running automated smoke test on $INSTANCE_ID..."
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Smoke Test: Container Health Check" \
+            --parameters commands='[
+              "set -euo pipefail",
+              "docker ps --filter name=cloud-expert-service --format \"table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\"",
+              "curl --fail --retry 5 --retry-delay 3 --retry-connrefused http://localhost:3000/health"
+            ]' \
+            --query "Command.CommandId" \
+            --output text)
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID"
+
+          OUTPUT=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query "StandardOutputContent" \
+            --output text)
+
+          echo "Smoke test response from instance:"
+          echo "$OUTPUT"
+
+          if ! echo "$OUTPUT" | grep -q '"status":"ok"'; then
+            echo "Smoke test failed: unexpected response."
+            exit 1
+          fi
+          echo "Smoke test passed: Container is healthy on AWS infrastructure."

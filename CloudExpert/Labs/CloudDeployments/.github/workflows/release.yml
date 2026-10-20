@@ -1,0 +1,301 @@
+---
+name: Release Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1 - Common Quality Gate
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm test
+
+  # 2A - Build Container
+  build-container:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t cloud-expert-service:${{ github.sha }} \
+            .
+
+      - name: Export Docker image
+        run: |
+          docker save \
+            cloud-expert-service:${{ github.sha }} \
+            -o container-image.tar
+
+      - name: Upload container artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-candidate
+          path: container-image.tar
+          retention-days: 1
+
+  # 3A - Test Container
+  test-deploy-container:
+    needs: build-container
+    runs-on: ubuntu-latest
+    environment: test
+
+    steps:
+      - name: Download container artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: container-candidate
+
+      - name: Load Docker image
+        run: docker load -i container-image.tar
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name test-container \
+            -p 3000:3000 \
+            -e PORT=3000 \
+            cloud-expert-service:${{ github.sha }}
+
+      - name: Smoke test
+        run: |
+          for i in {1..10}; do
+            if curl -fsS http://localhost:3000/health \
+              | jq -e '.status == "ok"'; then
+              exit 0
+            fi
+
+            sleep 3
+          done
+
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f test-container || true
+  
+  # 4A - Production Container Release
+  production-release-container:
+    needs: test-deploy-container
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+    environment: production
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download container artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: container-candidate
+
+      - name: Load Docker image
+        run: docker load -i container-image.tar
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io \
+                -u "${{ github.actor }}" \
+                --password-stdin
+
+      - name: Publish image
+        env:
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          IMAGE="ghcr.io/${OWNER,,}/cloud-expert-service"
+
+          docker tag \
+            cloud-expert-service:${{ github.sha }} \
+            "$IMAGE:${{ github.sha }}"
+
+          docker tag \
+            cloud-expert-service:${{ github.sha }} \
+            "$IMAGE:latest"
+
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+  # 2B - Build Binary
+  build-binary:
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install production dependencies
+        run: npm ci --omit=dev
+
+      - name: Package application
+        run: |
+          mkdir -p dist
+
+          tar -czf \
+            "dist/node-service-${{ github.sha }}.tar.gz" \
+            src package.json package-lock.json \
+            $(test -d node_modules && echo node_modules)
+
+      - name: Generate checksum
+        run: |
+          cd dist
+
+          sha256sum \
+            "node-service-${{ github.sha }}.tar.gz" \
+            > "node-service-${{ github.sha }}.tar.gz.sha256"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-candidate
+          path: dist/
+          retention-days: 1
+
+  # 3B - Test Binary
+  test-deploy-binary:
+    needs: build-binary
+    runs-on: ubuntu-latest
+    environment: test
+
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-candidate
+          path: dist
+
+      - name: Verify checksum
+        run: |
+          cd dist
+
+          sha256sum -c \
+            "node-service-${{ github.sha }}.tar.gz.sha256"
+
+      - name: Extract application
+        run: |
+          mkdir -p /tmp/app-sandbox
+
+          tar -xzf \
+            "dist/node-service-${{ github.sha }}.tar.gz" \
+            -C /tmp/app-sandbox
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Start application and smoke test
+        run: |
+          cd /tmp/app-sandbox
+
+          PORT=4000 NODE_ENV=test node src/server.mjs &
+          APP_PID=$!
+
+          trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
+
+          for i in {1..10}; do
+            if curl -fsS http://localhost:4000/health; then
+              exit 0
+            fi
+
+            sleep 3
+          done
+
+          exit 1
+
+  # 4B - Production Binary Release
+  production-release-binary:
+    needs: test-deploy-binary
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    runs-on: ubuntu-latest
+    environment: production
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Download binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-candidate
+          path: dist
+
+      - name: Verify checksum
+        run: |
+          cd dist
+
+          sha256sum -c \
+            "node-service-${{ github.sha }}.tar.gz.sha256"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "v-${{ github.sha }}" \
+            "dist/node-service-${{ github.sha }}.tar.gz" \
+            "dist/node-service-${{ github.sha }}.tar.gz.sha256" \
+            --target "${{ github.sha }}" \
+            --title "Release ${{ github.sha }}" \
+            --notes "Automated release from GitHub Actions"
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Upload artifacts to S3
+        env:
+          ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }} # S3-bucket on AWS, saved in github under environment variables
+        run: |
+          aws s3 cp dist/ \
+          "s3://${ARTIFACT_BUCKET}/releases/${{ github.sha }}/" \
+          --recursive \
+          --metadata "git-commit=${{ github.sha }},built-by=github-actions"

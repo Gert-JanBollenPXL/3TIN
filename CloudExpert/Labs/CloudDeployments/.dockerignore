@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+dist
+coverage
+test
+tests
+.env
+.env.*
+npm-debug.log*
+*.tar.gz
+*.tar.gz.sha256

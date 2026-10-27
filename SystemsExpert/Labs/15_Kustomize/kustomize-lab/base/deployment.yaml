@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: web
+        image: ghcr.io/stefanprodan/podinfo:6.14.1
+        ports:
+        - name: http
+          containerPort: 9898
+        envFrom:
+        - configMapRef:
+            name: web-config
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
